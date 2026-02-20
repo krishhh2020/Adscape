@@ -1,59 +1,72 @@
+// server/routes/billboards.js
 import express from "express";
 import pool from "../db.js";
 const router = express.Router();
 
-// 1. GET ALL: Fetch all billboards
+// GET all billboards
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM billboards ORDER BY billboard_id DESC");
     res.json(result.rows);
   } catch (err) {
-    console.error("GET Error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("Select Error:", err);
+    res.status(500).json({ error: "Database sync failed.", detail: err.message });
   }
 });
 
-// 2. POST: Add a new billboard
+// POST a new billboard
 router.post("/", async (req, res) => {
-  const { location, price, availability, resolution } = req.body;
+  // Accept either price_per_day (new) or price (old) for compatibility
+  const {
+    location,
+    price_per_day,
+    price, // optional legacy
+    resolution,
+    availability = true,
+    contact_phone = null,
+    contact_email = null,
+  } = req.body;
+
+  // Choose numeric price value: prefer price_per_day, fallback to price
+  const priceValue = price_per_day ?? price ?? null;
+
+  // Basic validation
+  if (!location || String(location).trim() === "") {
+    return res.status(400).json({ error: "location is required" });
+  }
+  if (priceValue !== undefined && priceValue !== null && isNaN(Number(priceValue))) {
+    return res.status(400).json({ error: "price_per_day must be a number" });
+  }
+  if (contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact_email)) {
+    return res.status(400).json({ error: "invalid email format" });
+  }
+
   try {
     const result = await pool.query(
-      "INSERT INTO billboards (location, price, availability, resolution) VALUES ($1, $2, $3, $4) RETURNING *",
-      [location, price, availability ?? true, resolution ?? "1920x1080"]
+      `INSERT INTO billboards
+       (location, price_per_day, resolution, availability, contact_phone, contact_email)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [location, priceValue, resolution, availability, contact_phone, contact_email]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error("POST Error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("Insert Error:", err);
+    res.status(500).json({ error: "Failed to register billboard node.", detail: err.message });
   }
 });
 
-// 3. DELETE: Remove a billboard
+// DELETE a billboard
 router.delete("/:id", async (req, res) => {
   const { id } = req.params;
   try {
     const result = await pool.query("DELETE FROM billboards WHERE billboard_id = $1", [id]);
-    if (result.rowCount === 0) return res.status(404).json({ error: "Not found" });
-    res.json({ message: "Billboard deleted" });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Billboard not found" });
+    }
+    res.json({ message: "Deleted" });
   } catch (err) {
-    console.error("DELETE Error:", err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 4. PUT: Update an existing billboard
-router.put("/:id", async (req, res) => {
-  const { id } = req.params;
-  const { location, price, resolution, availability } = req.body;
-  try {
-    const result = await pool.query(
-      "UPDATE billboards SET location = $1, price = $2, resolution = $3, availability = $4 WHERE billboard_id = $5 RETURNING *",
-      [location, price, resolution, availability, id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error("UPDATE Error:", err.message);
+    console.error("Delete Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
